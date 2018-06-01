@@ -1,9 +1,12 @@
 from __future__ import absolute_import
 
 from datetime import datetime, timedelta
+from mock import patch
 import pytest
+import pytz
 import time
 
+from sentry.models import GroupHash, GroupHashTombstone
 from sentry.testutils import SnubaTestCase
 from sentry.utils import snuba
 
@@ -44,3 +47,24 @@ class SnubaTest(SnubaTestCase):
                 filter_keys={'project_id': [100]},
                 groupby=[")("],
             )
+
+    @patch('django.utils.timezone.now')
+    def test_get_project_issues(self, mock_time):
+        now = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
+        mock_time.return_value = now
+        assert snuba.get_project_issues([self.project]) == []
+
+        GroupHash.objects.create(
+            project=self.project,
+            group=self.group,
+            hash='a' * 32
+        )
+        assert snuba.get_project_issues([self.project]) == [(1, [('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', None)])]
+
+        GroupHashTombstone.tombstone_groups(self.project.id, [self.group.id])
+        GroupHash.objects.create(
+            project=self.project,
+            group=self.group,
+            hash='a' * 32
+        )
+        assert snuba.get_project_issues([self.project]) == [(1, [('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now)])]
