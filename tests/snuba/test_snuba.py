@@ -53,12 +53,12 @@ class SnubaTest(SnubaTestCase):
     def test_project_issues_with_tombstones(self, mock_time):
         now = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
         mock_time.return_value = now
-        hash = 'a' * 32
+        a_hash = 'a' * 32
 
         def _insert_event_for_time(ts):
             self.snuba_insert({
                 'event_id': uuid.uuid4().hex,
-                'primary_hash': hash,
+                'primary_hash': a_hash,
                 'project_id': 100,
                 'message': 'message',
                 'platform': 'python',
@@ -93,14 +93,15 @@ class SnubaTest(SnubaTestCase):
         _insert_event_for_time(now)
         assert _query_for_issue(group1.id) == {group1.id: 1}
 
-        # group is deleted and then recreated
+        # group is deleted and then returns (as a new group with the same hash)
         GroupHashTombstone.tombstone_groups(self.project.id, [group1.id])
         GroupHash.objects.create(
             project=self.project,
             group=group2,
-            hash='a' * 32
+            hash=a_hash,
         )
 
+        # tombstone time is returned as expected
         assert snuba.get_project_issues([self.project], [group2.id]) == \
             [(group2.id, [('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2018-01-01 00:00:00')])]
 
