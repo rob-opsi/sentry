@@ -5,6 +5,7 @@ from mock import patch
 import pytest
 import pytz
 import time
+import uuid
 
 from sentry.models import GroupHash, GroupHashTombstone
 from sentry.testutils import SnubaTestCase
@@ -49,22 +50,64 @@ class SnubaTest(SnubaTestCase):
             )
 
     @patch('django.utils.timezone.now')
-    def test_get_project_issues(self, mock_time):
+    def test_project_issues_with_tombstones(self, mock_time):
         now = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
         mock_time.return_value = now
-        assert snuba.get_project_issues([self.project]) == []
+        hash = 'a' * 32
+
+        def _insert_event_for_time(ts):
+            self.snuba_insert({
+                'event_id': uuid.uuid4().hex,
+                'primary_hash': hash,
+                'project_id': 100,
+                'message': 'message',
+                'platform': 'python',
+                'datetime': ts.strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+                'data': {
+                    'received': time.mktime(ts.timetuple()),
+                }
+            })
+
+        def _query_for_issue(group_id):
+            return snuba.query(
+                start=now - timedelta(days=1),
+                end=now + timedelta(days=1),
+                groupby=['issue'],
+                filter_keys={
+                    'project_id': [100],
+                    'issue': [group_id]
+                },
+            )
+
+        group1 = self.create_group()
+        group2 = self.create_group()
 
         GroupHash.objects.create(
             project=self.project,
-            group=self.group,
-            hash='a' * 32
-        )
-        assert snuba.get_project_issues([self.project]) == [(1, [('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', None)])]
+            group=group1,
+            hash=hash)
+        assert snuba.get_project_issues([self.project], [group1.id]) == \
+            [(group1.id, [('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', None)])]
 
-        GroupHashTombstone.tombstone_groups(self.project.id, [self.group.id])
+        # 1 event in the groups, no deletes have happened
+        _insert_event_for_time(now)
+        assert _query_for_issue(group1.id) == {group1.id: 1}
+
+        # group is deleted and then recreated
+        GroupHashTombstone.tombstone_groups(self.project.id, [group1.id])
         GroupHash.objects.create(
             project=self.project,
-            group=self.group,
+            group=group2,
             hash='a' * 32
         )
-        assert snuba.get_project_issues([self.project]) == [(1, [('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', now)])]
+
+        assert snuba.get_project_issues([self.project], [group2.id]) == \
+            [(group2.id, [('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2018-01-01 00:00:00')])]
+
+        # events <= to the tombstone date aren't returned
+        _insert_event_for_time(now)
+        assert _query_for_issue(group2.id) == {}
+
+        # only the event > than the tombstone date is returned
+        _insert_event_for_time(now + timedelta(seconds=1))
+        assert _query_for_issue(group2.id) == {group2.id: 1}

@@ -245,7 +245,8 @@ def get_project_issues(project_ids, issue_ids=None):
     result = {}
     for h in hashes:
         tombstone_date = tombstones_by_project.get(h.project_id, {}).get(h.hash, None)
-        result.setdefault(h.group_id, []).append((h.hash, tombstone_date))
+        pair = (h.hash, tombstone_date.strftime("%Y-%m-%d %H:%M:%S") if tombstone_date else None)
+        result.setdefault(h.group_id, []).append(pair)
     return list(result.items())
 
 
