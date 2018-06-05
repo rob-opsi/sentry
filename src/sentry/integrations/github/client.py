@@ -1,6 +1,6 @@
 from __future__ import absolute_import
 
-import datetime
+from datetime import datetime
 
 from sentry.integrations.github.utils import get_jwt
 from sentry.integrations.client import ApiClient
@@ -45,22 +45,34 @@ class GitHubClientMixin(ApiClient):
 
 class GitHubAppsClient(GitHubClientMixin):
 
-    def __init__(self, external_id):
-        self.external_id = external_id
-        self.token = None
-        self.expires_at = None
+    def __init__(self, integration):
+        self.integration = integration
         super(GitHubAppsClient, self).__init__()
 
     def get_token(self):
-        if not self.token or self.expires_at < datetime.datetime.utcnow():
+        """
+        Get token retrieves the active access token from the integration model.
+        Should the token have expried, a new token will be generated and
+        automatically presisted into the integration.
+        """
+        token = self.integration.metadata['access_token']
+        expires_at = self.integration.metadata['expires_at']
+
+        if not token or expires_at < datetime.utcnow():
             res = self.create_token()
-            self.token = res['token']
-            self.expires_at = datetime.datetime.strptime(
+            token = res['token']
+            expires_at = datetime.strptime(
                 res['expires_at'],
                 '%Y-%m-%dT%H:%M:%SZ',
             )
 
-        return self.token
+            self.integration.metadata.update({
+                'access_token': token,
+                'expires_at': expires_at,
+            })
+            self.integration.save()
+
+        return token
 
     def request(self, method, path, headers=None, data=None, params=None):
         if headers is None:
@@ -74,7 +86,7 @@ class GitHubAppsClient(GitHubClientMixin):
     def create_token(self):
         return self.post(
             '/installations/{}/access_tokens'.format(
-                self.external_id,
+                self.integration.external_id,
             ),
             headers={
                 'Authorization': 'Bearer %s' % get_jwt(),

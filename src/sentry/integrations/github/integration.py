@@ -48,7 +48,7 @@ API_ERRORS = {
 class GitHubIntegration(Integration):
 
     def get_client(self):
-        return GitHubAppsClient(external_id=self.model.external_id)
+        return GitHubAppsClient(integration=self.model)
 
     def message_from_error(self, exc):
         if isinstance(exc, ApiError):
